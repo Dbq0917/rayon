@@ -372,12 +372,15 @@ impl Registry {
 
     pub(super) fn catch_unwind(&self, f: impl FnOnce()) {
         if let Err(err) = unwind::halt_unwinding(f) {
-            // If there is no handler, or if that handler itself panics, then we abort.
-            let abort_guard = unwind::AbortIfPanic;
             if let Some(ref handler) = self.panic_handler {
+                // If the handler itself panics, then we abort.
+                let abort_guard = unwind::AbortIfPanic;
                 handler(err);
                 mem::forget(abort_guard);
             }
+            // With no handler, the panic is isolated to the faulting
+            // task. The panic hook has already reported it, so we just
+            // let it go and keep the pool alive for new tasks.
         }
     }
 

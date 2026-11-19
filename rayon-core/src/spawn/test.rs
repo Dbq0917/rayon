@@ -53,6 +53,32 @@ fn panic_fwd() {
     assert_eq!(1, rx.recv().unwrap());
 }
 
+/// A panicking task must be isolated: without a panic handler, the
+/// panic is contained to that task and the pool keeps accepting and
+/// running new tasks.
+#[test]
+#[cfg_attr(not(panic = "unwind"), ignore)]
+fn panic_isolated_and_pool_survives() {
+    let pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+
+    // This task panics without any panic handler registered.
+    pool.spawn(|| panic!("Hello, world!"));
+
+    // Tasks submitted afterwards still run to completion.
+    let (tx, rx) = channel();
+    for _ in 0..100 {
+        let tx = tx.clone();
+        pool.spawn(move || tx.send(()).unwrap());
+    }
+    for _ in 0..100 {
+        rx.recv().unwrap();
+    }
+
+    // Blocking submissions are unaffected as well.
+    let (a, b) = pool.join(|| 1, || 2);
+    assert_eq!((a, b), (1, 2));
+}
+
 /// Test what happens when the thread pool is dropped but there are
 /// still active asynchronous tasks. We expect the thread pool to stay
 /// alive and executing until those threads are complete.

@@ -557,9 +557,9 @@ impl<S> ThreadPoolBuilder<S> {
     /// obvious place where we should propagate the panic to.
     /// In that case, this panic handler is invoked.
     ///
-    /// If no panic handler is set, the default is to abort the
-    /// process, under the principle that panics should not go
-    /// unobserved.
+    /// If no panic handler is set, the panic is isolated to the
+    /// faulting task: it is reported by the panic hook and then
+    /// dropped, and the thread pool keeps accepting new tasks.
     ///
     /// If the panic handler itself panics, this will abort the
     /// process. To prevent this, wrap the body of your panic handler
