@@ -9,7 +9,10 @@ where
     PI: ParallelIterator,
     S: Send + Sum<PI::Item> + Sum,
 {
-    pi.drive_unindexed(SumConsumer::new())
+    // Drive the reduction with a deterministic split plan, so that sums of
+    // non-associative operations (like floating-point addition) produce the
+    // same result on every run with the same input and thread pool.
+    with_deterministic_splits(|| pi.drive_unindexed(SumConsumer::new()))
 }
 
 fn add<T: Sum>(left: T, right: T) -> T {

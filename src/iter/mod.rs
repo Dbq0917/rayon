@@ -1361,10 +1361,12 @@ pub trait ParallelIterator: Sized + Send {
 
     /// Sums up the items in the iterator.
     ///
-    /// Note that the order in items will be reduced is not specified,
-    /// so if the `+` operator is not truly [associative] \(as is the
-    /// case for floating point numbers), then the results are not
-    /// fully deterministic.
+    /// Note that the order in which items will be reduced is not specified,
+    /// but it is deterministic: repeated runs with the same input and the
+    /// same thread pool configuration always produce the same result, even
+    /// if the `+` operator is not truly [associative] \(as is the case for
+    /// floating point numbers). Results may still differ across different
+    /// thread counts or rayon versions.
     ///
     /// [associative]: https://en.wikipedia.org/wiki/Associative_property
     ///

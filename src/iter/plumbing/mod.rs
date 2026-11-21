@@ -8,6 +8,41 @@ use crate::join_context;
 
 use super::IndexedParallelIterator;
 
+use std::cell::Cell;
+
+thread_local! {
+    /// When set, splitters use a fixed split plan that depends only on the
+    /// length of the data and the number of threads, never on the timing of
+    /// work steals. This makes reductions of non-associative operations (like
+    /// floating-point addition) reproducible across runs.
+    static DETERMINISTIC_SPLITS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `f` with deterministic splitting enabled, restoring the previous
+/// setting afterwards (even if `f` panics). The setting is captured by
+/// [`Splitter::new()`] at the root of the reduction and then carried by
+/// value, so it applies uniformly to jobs that migrate to other threads.
+pub(crate) fn with_deterministic_splits<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<bool>);
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                DETERMINISTIC_SPLITS.with(|cell| cell.set(previous));
+            }
+        }
+    }
+
+    let previous = DETERMINISTIC_SPLITS.with(|cell| cell.replace(true));
+    let _reset = Reset(Some(previous));
+    f()
+}
+
+#[inline]
+fn deterministic_splits_enabled() -> bool {
+    DETERMINISTIC_SPLITS.with(Cell::get)
+}
+
 /// The `ProducerCallback` trait is a kind of generic closure,
 /// [analogous to `FnOnce`][FnOnce]. See [the corresponding section in
 /// the plumbing README][r] for more details.
@@ -253,6 +288,11 @@ struct Splitter {
     /// like to split this job.  We always just divide it by two though, so
     /// the effective number of pieces will be `next_power_of_two()`.
     splits: usize,
+
+    /// When set, stealing is ignored and the split plan becomes a pure
+    /// function of the initial state, so the resulting reduction tree is
+    /// reproducible across runs. See [`with_deterministic_splits()`].
+    deterministic: bool,
 }
 
 impl Splitter {
@@ -260,14 +300,27 @@ impl Splitter {
     fn new() -> Splitter {
         Splitter {
             splits: crate::current_num_threads(),
+            deterministic: deterministic_splits_enabled(),
         }
     }
 
     #[inline]
     fn try_split(&mut self, stolen: bool) -> bool {
-        let Splitter { splits } = *self;
+        let Splitter {
+            splits,
+            deterministic,
+        } = *self;
 
-        if stolen {
+        if deterministic {
+            // Keep splitting on a fixed schedule, regardless of stealing,
+            // so the shape of the reduction tree stays reproducible.
+            if splits > 0 {
+                self.splits /= 2;
+                true
+            } else {
+                false
+            }
+        } else if stolen {
             // This job was stolen!  Reset the number of desired splits to the
             // thread count, if that's more than we had remaining anyway.
             self.splits = Ord::max(crate::current_num_threads(), self.splits / 2);

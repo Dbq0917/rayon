@@ -891,6 +891,41 @@ fn check_sum_filtered_ints() {
 }
 
 #[test]
+fn check_sum_floats_deterministic() {
+    // Non-associative float sums must be reproducible: the same input summed
+    // repeatedly (with the same thread pool) must give identical results,
+    // even though the parallel reduction order is timing-dependent in
+    // general. Use values with wildly varying magnitudes so that any change
+    // in association order would show up in the final bits.
+    let a: Vec<f64> = (0..1_000_000)
+        .map(|i| {
+            let bits = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let unit = (bits >> 11) as f64 / (1u64 << 53) as f64 - 0.5;
+            unit * 10f64.powi((i % 21) as i32 - 10)
+        })
+        .collect();
+
+    let expected: f64 = a.par_iter().sum();
+    for _ in 0..10 {
+        let sum: f64 = a.par_iter().sum();
+        assert_eq!(sum.to_bits(), expected.to_bits());
+    }
+
+    // The same guarantee holds through map-like adaptors and filters.
+    let expected: f64 = a.par_iter().map(|x| x * 1.5).sum();
+    for _ in 0..10 {
+        let sum: f64 = a.par_iter().map(|x| x * 1.5).sum();
+        assert_eq!(sum.to_bits(), expected.to_bits());
+    }
+
+    let expected: f64 = a.par_iter().filter(|x| **x > 0.0).sum();
+    for _ in 0..10 {
+        let sum: f64 = a.par_iter().filter(|x| **x > 0.0).sum();
+        assert_eq!(sum.to_bits(), expected.to_bits());
+    }
+}
+
+#[test]
 fn check_sum_filtermap_ints() {
     let a: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     let par_sum_evens: u32 = a
