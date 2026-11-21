@@ -402,7 +402,7 @@ where
         C: Consumer<P::Item>,
     {
         if consumer.full() {
-            consumer.into_folder().complete()
+            finish_consumer(consumer)
         } else if splitter.try_split(len, migrated) {
             let mid = len / 2;
             let (left_producer, right_producer) = producer.split_at(mid);
@@ -427,11 +427,23 @@ where
                     )
                 },
             );
-            reducer.reduce(left_result, right_result)
+            reduce_results(reducer, left_result, right_result)
         } else {
-            producer.fold_with(consumer.into_folder()).complete()
+            fold_producer(producer, consumer)
         }
     }
+}
+
+// Keep user folder code out of the recursive split stack. Otherwise a large
+// stack frame in the per-item closure is repeated in every level of `helper`,
+// which can overflow the worker stack for deep splits.
+#[inline(never)]
+fn fold_producer<P, C>(producer: P, consumer: C) -> C::Result
+where
+    P: Producer,
+    C: Consumer<P::Item>,
+{
+    producer.fold_with(consumer.into_folder()).complete()
 }
 
 /// A variant of [`bridge_producer_consumer()`] where the producer is an unindexed producer.
@@ -455,7 +467,7 @@ where
     C: UnindexedConsumer<P::Item>,
 {
     if consumer.full() {
-        consumer.into_folder().complete()
+        finish_consumer(consumer)
     } else if splitter.try_split(migrated) {
         match producer.split() {
             (left_producer, Some(right_producer)) => {
@@ -466,11 +478,37 @@ where
                     |context| bridge(context.migrated(), splitter, left_producer, left_consumer),
                     |context| bridge(context.migrated(), splitter, right_producer, right_consumer),
                 );
-                reducer.reduce(left_result, right_result)
+                reduce_results(reducer, left_result, right_result)
             }
-            (producer, None) => producer.fold_with(consumer.into_folder()).complete(),
+            (producer, None) => fold_unindexed_producer(producer, consumer),
         }
     } else {
-        producer.fold_with(consumer.into_folder()).complete()
+        fold_unindexed_producer(producer, consumer)
     }
+}
+
+// See `fold_producer` above.
+#[inline(never)]
+fn fold_unindexed_producer<P, C>(producer: P, consumer: C) -> C::Result
+where
+    P: UnindexedProducer,
+    C: UnindexedConsumer<P::Item>,
+{
+    producer.fold_with(consumer.into_folder()).complete()
+}
+
+#[inline(never)]
+fn finish_consumer<I, C>(consumer: C) -> C::Result
+where
+    C: Consumer<I>,
+{
+    consumer.into_folder().complete()
+}
+
+#[inline(never)]
+fn reduce_results<T, R>(reducer: R, left: T, right: T) -> T
+where
+    R: Reducer<T>,
+{
+    reducer.reduce(left, right)
 }
